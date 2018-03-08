@@ -1,0 +1,350 @@
+---
+title: Text Analysis on Songs by Musicians with Tragic Deaths
+author: Faye Tumaliuan
+date: '2018-03-06'
+slug: text-analysis-on-songs-by-musicians-with-tragic-deaths
+categories:
+  - R
+tags:
+  - R Markdown
+  - Sentiment Analysis
+  - LDA
+  - TF-IDF
+  - Word Frequency
+  - Text Mining
+  - Web Scraping
+---
+
+![](/img/artists.png)
+
+
+We can do a lot of analysis on text data and learn so much from simple techniques like word counts, TF-IDF, LDA, and Sentiment Analysis. What makes our analysis important, is determining what data we want to analyze and the influence this analysis makes. Text analysis and data science are never definite - because we cannot always get all data and we cannot make everything constant at all times ***(ceteris paribus)***. The golden rule of Statistics, we cannot make causal relationships and assumptions, but we can determine patterns, and these patterns would help us undestand some basic things around us. If we are cave men who did these analysis back then, patterns will let us know that dinosaurs are dangerous but diving deeper into our data lets us know which ones to avoid. Of course that's a lousy analogy.  
+
+
+This analysis focuses on song lyrics by some popular musicians who had tragic deaths. Note that we used artists who are also songwriters, and we scraped the lyrics using the site [Metrolyrics](http://www.metrolyrics.com/). Since the site does not indicate the composer, we are assuming that all the songs scraped from the artists are their work, and we only include those songs when the artists themselves were alive (in the case of the artists being part of a band). The code used for scraping the lyrics and the final data can be found [here](https://github.com/fayetumaliuan/CEU-UTD-Proj). You can also find the Rmarkdown file which contains all the hidden code chunks in this blog post.   
+
+Below is a guide  of each artist's death:  
+
+- Amy Winehouse: Alcohol poisoning. She had problems with substance abuse and depression     
+- Elliot Smith: Suicide by stab wounds to the chest, with open question of homicide. Suffered from depression      
+- Ian Curtis: Suicide by hanging, suffered from depression         
+- Jim Morrison: Heroin overdose      
+- Jimi Hendrix: Suicide by sleeping pills     
+- Kurt Cobain: Suicide by a self-inflicted shotgun wound to the head       
+- Michael Jackson: Homicide, by series of intoxication  
+- Nick Drake: Suicide from substance poisoning, suffered from depression         
+- Phil Lynott: Heroin overdose        
+- Prince: Overdose of opioid  
+
+## Why do this analysis? ##
+
+Depression is a broad subject, and a lot of good artists suffer from it. Not just singers and songwriters, but all kinds of art, of any medium. This includes painters, playrights, writers, musicians, etc. Since we can easily study the works of writers through poems, books, and documents, now we want to see patterns in song lyrics to analyze an artist's works.  
+
+This post only includes simple text analytics, and it doesn't aim to identify or imply any causal relationship to depression, but aims to scratch a rather thin surface of it.  
+
+I once observed a friend who suffered from depression, and how that friend was in his/her best self when he/she was sad and when he/she was happy. Both emotions brought about very well-written works, and I believe these emotions makes a good artist. You cannot take away one from the other, and each of them brings their own charm.  
+
+
+## Text Analysis ##
+
+After collecting the data, we will perform text analysis by transforming it into tidy data. Then we perform word frequencies and TF-IDF (Term Frequency-Inverse Document Frequency), Sentiment Analysis using different lexicons (afinn, bing, nrc), and topic modeling using LDA (Latent Dirichlet Allocation).  
+
+We rename band names into specific artists, and do a little bit of data cleansing.  
+
+```{r, warning=FALSE, message = FALSE}
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(tidytext)
+library(ggplot2)
+library(topicmodels)
+library(knitr)
+completesongs <- read.csv('artist_songs_final.csv')
+completesongs <- completesongs %>% mutate(lyrics = str_replace_all(lyrics, '\n', ' '))
+completesongs <- completesongs %>%
+  mutate(artist=str_replace(artist, 'Joy-Division', 'Ian-Curtis'))
+completesongs <- completesongs %>%
+  mutate(artist=str_replace(artist, 'Nirvana', 'Kurt-Cobain'))
+completesongs <- completesongs %>%
+  mutate(artist=str_replace(artist, 'The-Doors', 'Jim-Morrison'))
+completesongs <- completesongs %>%
+  mutate(artist=str_replace(artist, 'Thin-Lizzy', 'Phil-Lynott'))
+
+songs <- completesongs
+```
+
+The table below shows the number of songs we have for each artist, and we take note that Michael Jackson and Prince has a lot of songs compared to the others.  
+
+```{r, echo = FALSE, warning=FALSE, message = FALSE}
+artist_t <- songs %>% group_by(artist) %>%
+ count(artist) %>%
+ arrange(desc(n))
+
+kable(artist_t)
+
+```
+
+## Word Frequency and TF-IDF ##  
+
+Since song lyrics typically has words like 'yeah' and 'ahh' which are mostly meaningless, we add these to the custom stop words which we will be using throughout the analysis.  
+
+```{r, warning=FALSE, message = FALSE}
+custom_stop_words <- bind_rows(stop_words,
+                               data_frame(word = c('ma', 'na', 'sa', 'amy', 'annie', 'yeah', 'hey', 'ooh', 'uh', 'mmm', 'la', 'da', 'dah', 'ah'),
+                                          lexicon = "custom"))
+
+song_tokens <-  songs %>%
+  unnest_tokens(word, lyrics) %>%
+  filter(! str_detect(word, "'")) %>%
+  filter(!word %in% custom_stop_words$word,
+         str_detect(word, "[a-z]")) %>%
+  filter(!str_detect(word, "[0-9]")) %>%
+  count(artist, word, sort = TRUE) %>%
+  ungroup()
+
+```
+
+Now we take a look at our first plot, the most frequent words used by each artist, removing duplicate word frequency points. We can see some common words in all artists like 'love', 'time', 'night', and 'day'. Some artists have the same most frequent words, so we want to see next the most frequent words specific or distinct for each artist. 
+
+```{r, echo= FALSE,warning=FALSE, message = FALSE, fig.height = 12, fig.width = 10, fig.align = "center"}
+plot_songs <- song_tokens %>%
+  bind_tf_idf(word, artist, n) %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) 
+
+
+#plot most frequent words for each artist without stop words
+plot_songs %>% 
+  group_by(artist) %>% 
+  top_n(10, tf) %>% 
+  filter(row_number(tf) < 11) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, tf)) %>%
+  ggplot(aes(word, tf, fill = artist)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf") +
+  facet_wrap(~artist, ncol = 2, scales = "free") +
+  coord_flip() + ggtitle("Top 10 most frequent words by Artist")
+```
+
+TF-IDF, which means Term Frequency-Inverse Document Frequency, shows us how distinct or how important a word is for a specific artist by counting its frequency with respect to other artists. To do this, we get the TF-IDF for each word and plot the highest TF-IDF values for each artist.  
+
+Observe that Amy Winehouse's top distinct word is 'rehab', and that in some part of her life she has been battling substance abuse and had some treatments. It is interesting that this reflects in her songs.  
+
+Also notice that Nick Drake has 'cocaine' as one of his top distinct words, and Michael Jackson's list includes 'thriller'.  
+
+```{r, echo= FALSE,warning=FALSE, message = FALSE, fig.height = 12, fig.width = 10, fig.align = "center"}
+plot_songs %>% 
+  group_by(artist) %>% 
+  top_n(10, tf_idf) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, tf_idf)) %>%
+  ggplot(aes(word, tf_idf, fill = artist)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~artist, ncol = 2, scales = "free") +
+  coord_flip() + ggtitle("Top 10 TF-IDF by Artist")
+```
+
+## Sentiment Analysis ##  
+
+To analyze the sentiments of the song lyrics, we use the three lexicons available in the tidytext package. Each word from all the songs *per artist* are tokenized and since they are grouped per artist, there are no duplicate word tokens per artist. We will also analyze and create word tokens *per song* and analyze it for some of the lexicons.  
+
+### AFINN Lexicon ###  
+
+The AFINN lexicon assigns a sentiment score for each word, ranging from -5 to 5. Since our data is tokenized, each word which is present in the lexicon gets assigned a score and is summed up for each artist.  
+
+From our results below, we can see that all the artists have negative total sentiment scores. Prince and Michael Jackson have the most negative scores, and Kurt Cobain and Jim Morrison have the least negative scores, but this is due to the number of songs in our data wherein the former two have significantly more songs than the latter two. What is important is that all have negative total sentiment scores.  
+
+```{r, echo= FALSE,warning=FALSE, message = FALSE, fig.height = 6, fig.width = 11, fig.align = "center"}
+afinn <- plot_songs %>%
+  inner_join(get_sentiments("afinn"))
+
+afinn_plot <- afinn %>%
+  group_by(artist) %>%
+  summarise(sum_of_scores=sum(score)) 
+
+afinn_plot$artist <- factor(afinn_plot$artist, levels = unique(afinn_plot$artist[order(afinn_plot$sum_of_scores)]))
+
+ggplot(afinn_plot, aes(artist, sum_of_scores)) +
+  geom_col(show.legend = FALSE) + ggtitle("AFINN Sentiment scores by Artist")
+```
+
+Seeing the total sentiment scores per artist, we now plot the total sentiments per song, and show them by artist. The x-axis is arranged by the year the songs were published.  
+
+The figure below shows that each artist had a fair share of positive songs and also negative ones. If we also look closer, most artists have negative song sentiments on their last years (most right part of the x-axis).  
+
+From the list of artists, Amy, Elliot, Ian, Jimi, Kurt, and Nick committed suicide, and from the plots below we can see that these artists had most of their songs with negative sentiment on their last years, with exception to Jimi. 
+
+
+```{r, echo= FALSE,warning=FALSE, message = FALSE, fig.height = 6, fig.width = 11, fig.align = "center"}
+song_tokens_per_song <-  songs %>%
+  unnest_tokens(word, lyrics) %>%
+  filter(! str_detect(word, "'")) %>%
+  filter(!word %in% custom_stop_words$word,
+         str_detect(word, "[a-z]")) %>%
+  filter(!str_detect(word, "[0-9]")) %>%
+  count(NULL.Name, word, sort = TRUE) %>%
+  ungroup()
+
+plot_songs_per_artist <- song_tokens_per_song %>%
+  bind_tf_idf(word, NULL.Name, n) %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) 
+
+afinn2 <- plot_songs_per_artist %>%
+  inner_join(get_sentiments("afinn"))
+
+afinn_plot2 <- afinn2 %>%
+  group_by(NULL.Name) %>%
+  summarise(sum_of_scores=sum(score)) %>%
+  inner_join(songs)
+
+#arrange by year
+afinn_plot2$NULL.Name <- factor(afinn_plot2$NULL.Name, levels = unique(afinn_plot2$NULL.Name[order(afinn_plot2$NULL.Year.)]))
+
+ggplot(afinn_plot2, aes(NULL.Name, sum_of_scores)) +
+  geom_col(show.legend = FALSE)  +
+  facet_wrap(~artist, ncol = 2, scales = "free") +
+  theme(axis.text.x=element_blank()) + ggtitle("AFINN Sentiment Scores per Song by Artist")
+
+```
+
+
+### BING Lexicon ###  
+
+The Bing lexicon assigns a 'positive' or 'negative' sentiment to a word token. It is different from the AFINN lexicon since in AFINN we assign scores, but in BING we assign a word as positive or negative.  
+
+We tokenize the data per song, as to analyze how positive or negative an artist is. We sum the total number of positive words, and total number of negative words. We then sum the values to see if an artist is more positive or more negative. Note that since AFINN assigns a score, it is probably more accurate, depending on usage.  
+
+Using Bing, we can see that we almost had the same result as with AFINN, with all artists having negative sentiments.  
+
+```{r, echo= FALSE,warning=FALSE, message = FALSE, fig.height = 6, fig.width = 11, fig.align = "center"}
+bing <- plot_songs_per_artist %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(NULL.Name, sentiment) %>%
+  spread(sentiment, nn, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+bing_plot <- bing %>% inner_join(songs) %>%
+  group_by(artist) %>%
+  mutate(sentiment_sum = sum(sentiment))
+
+
+bing_plot$artist <- factor(bing_plot$artist, levels = unique(bing_plot$artist[order(bing_plot$sentiment_sum)]))
+
+
+#plot by artist- SHOW: MORE POSITIVE OR MORE NEGATIVE?
+ggplot(bing_plot, aes(artist, sentiment_sum)) +
+  geom_col(show.legend = FALSE) + ggtitle("BING Total Sentiment per Song by Artist")
+```
+
+
+### NRC Lexicon ###  
+
+The NRC lexicon categorizes the words into 10 different sentiments, like 'sadness', 'fear', etc.  
+
+We again plot the sentiments per artist, and we can see that the top sentiment for all 9 artist is negative, except for Kurt Cobain. We can also see that next to this is positive, followed by sadness and fear.  
+
+It is again interesting that when we use NRC, 90% of the artists have negative sentiments and this is followed by positive sentiments. As said earlier in the start of this analysis, it was an observation that contrasting elements, like happy and sad, are key elements in good art. In this plot, we can see that negative is followed by positive, sadness is followed by joy, and fear is followed by trust.  
+
+
+```{r, echo= FALSE,warning=FALSE, message = FALSE, fig.height = 6, fig.width = 11, fig.align = "center"}
+nrc <- plot_songs %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(artist,sentiment, sort = TRUE) 
+
+nrc_plot <- nrc %>%
+  group_by(artist, sentiment) %>%
+  summarise(sum=sum(nn))
+
+nrc_plot$sentiment <- factor(nrc_plot$sentiment, levels = unique(nrc_plot$sentiment[order(nrc_plot$artist,-nrc_plot$sum)]))
+
+ggplot(nrc_plot, aes(sentiment, sum)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~artist, ncol = 2, scales = "free") 
+```
+
+### LDA ###
+
+And for the last text analysis technique, we extract topics from all the songs using LDA.  
+
+We started with 5 topics, but since the top topics almost had the same words, our final number of topics is 2. Observe that the top 20 words from each topic is almost the same, meaning all the artists have a common topic (or two topics. 
+
+```{r, echo= FALSE,warning=FALSE, message = FALSE, fig.height = 6, fig.width = 11, fig.align = "center"}
+
+songs_dtm <- song_tokens %>% 
+  cast_dtm(artist, word, n) 
+
+ap_lda <- LDA(songs_dtm, k = 2, control = list(seed = 1234))
+ap_topics <- tidy(ap_lda, matrix = "beta")
+
+
+ap_top_terms <- ap_topics %>%
+  group_by(topic) %>%
+  top_n(20, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+ap_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+```
+
+The difference of these topics is that topic 1 is more negative than topic 2.  
+
+Topic 1's contributive words to its negativeness are 'bad' and 'leave', while topic 2's contributive words to its positiveness are 'god' and 'beautiful'.  
+
+```{r, echo= FALSE,warning=FALSE, message = FALSE}
+
+afinn3 <- ap_top_terms %>% mutate(word = term) %>% 
+  inner_join(get_sentiments("afinn"))
+
+afinn3_plot <- afinn3 %>%
+  group_by(topic) %>%
+  summarise(sum_of_scores=sum(score)) 
+
+ggplot(afinn3_plot, aes(topic, sum_of_scores)) +
+  geom_col(show.legend = FALSE) + ggtitle("AFINN Sentiment scores by Topic")
+
+afinn3$word <- factor(afinn3$word, levels = unique(afinn3$word[order(-afinn3$score)]))
+
+ggplot(afinn3, aes(word, score)) +
+  geom_col(show.legend = FALSE) + ggtitle("AFINN Sentiment scores by Word") +
+  facet_wrap(~topic)
+
+```
+
+The last plot shows each artist's probabilities for each topic. They all have very small differences in topics, since both topics have almost the same words in them.  
+
+
+```{r, echo= FALSE,warning=FALSE, message = FALSE}
+##probabilities
+ap_topics_gamma <- tidy(ap_lda, matrix = "gamma")
+
+ap_topics_gamma <- ap_topics_gamma %>%
+  separate(document, c("title"), sep = "_", convert = TRUE)
+
+ap_topics_gamma %>%
+  mutate(title = reorder(title, gamma * topic)) %>%
+  ggplot(aes(factor(topic), gamma)) +
+  geom_boxplot() +
+  facet_wrap(~ title)
+```
+
+
+### Summary ###  
+
+This analysis shows us the similarities and differences of all the artists. We've seen that we can identify specific words which are usually used by an artist, and we can identify words which are distinct to each. Also, we performed sentiment analysis using three different lexicons and found out that all artists have negative sentiments, on different levels. We also found out that within these sentiments, contrasting feelings usually are close in frequency with each other.  
+
+Also we have seen that not all songs by artists are negative, some songs are positive on their own. Once we sum up the scores if we group by artist, the sentiment scores become negative. That is to say, the negativeness of an artist's work is also dependent on how many songs they have done. Repeating the words said earlier, we cannot imply causality on this analysis.  
+
+What we can say though, is that good artists create songs with strong emotions. Since this is an outlet for them, we can see almost through their emotion by text analysis. 
+
+
+
